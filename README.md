@@ -1,5 +1,32 @@
 # herdr
 
+> ### about this fork
+>
+> This is a fork of [herdrdev/herdr](https://github.com/herdrdev/herdr) that adds **dynamic agent workflows**: pick a builder and one or more reviewers in Settings, and every new project opens a named, auto-started tab per selected agent. Roles come from whichever agent CLIs you actually have installed, not a fixed pair.
+>
+> It also extends the bundled `herdr` skill so an agent asked to hand work to another agent routes through the live workspace (`herdr agent prompt`) instead of returning a copy-and-paste prompt.
+>
+> **This fork ships source only — there are no release binaries here.** Build it yourself:
+>
+> ```bash
+> git clone https://github.com/HarryZus/herdr.git && cd herdr
+> cargo build --release          # needs Rust 1.96.1
+> install -m 755 target/release/herdr ~/.local/bin/herdr
+> ```
+>
+> **Then install the agent skill.** Herdr does not do this for you, and without it agents cannot delegate to each other:
+>
+> ```bash
+> mkdir -p ~/.claude/skills/herdr ~/.codex/skills/herdr
+> herdr --skill > ~/.claude/skills/herdr/SKILL.md
+> herdr --skill > ~/.codex/skills/herdr/SKILL.md
+> ```
+>
+> Enable the workflow under **Settings → agents**, then create a new project — auto-start only applies to newly created workspaces, never to existing ones.
+>
+> Everything below is upstream's documentation and applies unchanged. For releases, Homebrew, and support, use [the upstream project](https://github.com/herdrdev/herdr).
+
+
 
 <p align="center">
   <img src="assets/logo.png" alt="herdr" width="100" />
