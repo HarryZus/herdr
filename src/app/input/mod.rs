@@ -412,6 +412,9 @@ impl App {
                         SettingsAction::SaveAgentBorderLabels(enabled) => {
                             self.save_agent_border_labels(enabled)
                         }
+                        SettingsAction::SaveAgentWorkflow(workflow) => {
+                            self.save_agent_workflow(workflow)
+                        }
                         SettingsAction::InstallRecommendedIntegrations => {
                             self.install_recommended_integrations()
                         }

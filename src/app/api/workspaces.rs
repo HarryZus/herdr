@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use crate::api::schema::{
-    EventData, EventEnvelope, EventKind, ResponseResult, WorkspaceCloseParams,
-    WorkspaceCreateParams, WorkspaceMoveBlockParams, WorkspaceMoveParams, WorkspaceRenameParams,
-    WorkspaceReportMetadataParams, WorkspaceTarget,
+    AgentStartParams, EventData, EventEnvelope, EventKind, ResponseResult, TabCreateParams,
+    TabRenameParams, WorkspaceCloseParams, WorkspaceCreateParams, WorkspaceMoveBlockParams,
+    WorkspaceMoveParams, WorkspaceRenameParams, WorkspaceReportMetadataParams, WorkspaceTarget,
 };
 use crate::app::App;
 
@@ -52,6 +52,7 @@ impl App {
             Ok(env) => env,
             Err((code, message)) => return encode_error(id, &code, message),
         };
+        let workflow_cwd = cwd.clone();
         match self.create_workspace_with_launch_env(cwd, params.focus, extra_env) {
             Ok(index) => {
                 if let Some(label) = params.label {
@@ -61,6 +62,7 @@ impl App {
                     }
                 }
                 self.emit_workspace_open_events(index);
+                self.create_agent_workflow_tabs(index, workflow_cwd);
                 encode_success(
                     id,
                     self.workspace_created_result(index)
@@ -68,6 +70,98 @@ impl App {
                 )
             }
             Err(err) => encode_error(id, "workspace_create_failed", err.to_string()),
+        }
+    }
+
+    fn create_agent_workflow_tabs(&mut self, ws_idx: usize, cwd: PathBuf) {
+        let workflow = self.state.agent_workflow.clone();
+        if !workflow.enabled {
+            return;
+        }
+
+        let mut agents = Vec::new();
+        for configured in std::iter::once(workflow.builder.as_str())
+            .chain(workflow.reviewers.iter().map(String::as_str))
+        {
+            let Some(agent) = crate::detect::parse_agent_label(configured) else {
+                continue;
+            };
+            let label = crate::detect::agent_label(agent);
+            if !agents.iter().any(|(existing, _)| *existing == label) {
+                agents.push((label, agent));
+            }
+        }
+        if agents.is_empty() {
+            return;
+        }
+
+        let workspace_id = self.public_workspace_id(ws_idx);
+        for (agent_idx, (label, agent)) in agents.into_iter().enumerate() {
+            let tab_idx = if agent_idx == 0 {
+                0
+            } else {
+                let previous_tab_count = self.state.workspaces[ws_idx].tabs.len();
+                let _ = self.handle_tab_create(
+                    "agent_workflow.tab.create".into(),
+                    TabCreateParams {
+                        workspace_id: Some(workspace_id.clone()),
+                        cwd: Some(cwd.to_string_lossy().into_owned()),
+                        focus: false,
+                        label: Some(label.to_string()),
+                        env: Default::default(),
+                    },
+                );
+                if self.state.workspaces[ws_idx].tabs.len() == previous_tab_count {
+                    continue;
+                }
+                previous_tab_count
+            };
+
+            if agent_idx == 0 {
+                let Some(tab_id) = self.public_tab_id(ws_idx, tab_idx) else {
+                    continue;
+                };
+                let _ = self.handle_tab_rename(
+                    "agent_workflow.tab.rename".into(),
+                    TabRenameParams {
+                        tab_id,
+                        label: label.to_string(),
+                    },
+                );
+            }
+
+            if !workflow.auto_start {
+                continue;
+            }
+            let Some(root_pane) = self
+                .state
+                .workspaces
+                .get(ws_idx)
+                .and_then(|workspace| workspace.tabs.get(tab_idx))
+                .map(|tab| tab.root_pane)
+            else {
+                continue;
+            };
+            let Some(pane_id) = self.public_pane_id(ws_idx, root_pane) else {
+                continue;
+            };
+            let unique_workspace = workspace_id
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .take(8)
+                .collect::<String>()
+                .to_ascii_lowercase();
+            let name = format!("w{unique_workspace}-{label}");
+            let _ = self.handle_agent_start(
+                "agent_workflow.agent.start".into(),
+                AgentStartParams {
+                    name,
+                    kind: crate::detect::agent_label(agent).to_string(),
+                    pane_id,
+                    args: Vec::new(),
+                    timeout_ms: None,
+                },
+            );
         }
     }
 
@@ -442,6 +536,46 @@ mod tests {
         );
         shutdown_test_runtimes(&mut app);
         let _ = std::fs::remove_dir_all(&focused_cwd);
+    }
+
+    #[tokio::test]
+    async fn workspace_workflow_creates_named_tab_for_each_selected_agent() {
+        use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
+        use crate::config::ShellModeConfig;
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.default_shell = exiting_test_command().into();
+        app.state.shell_mode = ShellModeConfig::NonLogin;
+        app.state.agent_workflow.enabled = true;
+        app.state.agent_workflow.auto_start = false;
+        app.state.agent_workflow.builder = "pi".into();
+        app.state.agent_workflow.reviewers = vec!["claude".into(), "codex".into()];
+
+        let response = app.handle_workspace_create(
+            "workflow".into(),
+            WorkspaceCreateParams {
+                cwd: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+                focus: true,
+                label: Some("agent-pair".into()),
+                env: Default::default(),
+            },
+        );
+
+        let _: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.workspaces[0].tabs.len(), 3);
+        let labels = (0..3)
+            .filter_map(|tab_idx| app.tab_info(0, tab_idx).map(|tab| tab.label))
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["pi", "claude", "codex"]);
+        shutdown_test_runtimes(&mut app);
     }
 
     fn app_with_linked_worktree() -> App {

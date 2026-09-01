@@ -285,6 +285,26 @@ impl Default for SessionConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AgentWorkflowConfig {
+    pub enabled: bool,
+    pub builder: String,
+    pub reviewers: Vec<String>,
+    pub auto_start: bool,
+}
+
+impl Default for AgentWorkflowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            builder: "claude".into(),
+            reviewers: vec!["codex".into()],
+            auto_start: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -319,6 +339,7 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub terminal: TerminalConfig,
     pub session: SessionConfig,
+    pub agent_workflow: AgentWorkflowConfig,
     pub server: ServerConfig,
     pub update: UpdateConfig,
     pub keys: KeysConfig,

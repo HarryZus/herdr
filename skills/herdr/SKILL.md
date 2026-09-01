@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: "Control Herdr, a terminal multiplexer for coding agents. Use only when the user explicitly mentions Herdr or asks to use Herdr to inspect or control panes, tabs, workspaces, commands, or another agent. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires HERDR_ENV=1."
+description: "Control Herdr, including requests to ask, delegate to, or obtain a review from another agent in the same Herdr workspace. Also use when the user explicitly mentions Herdr or asks to inspect or control its panes, tabs, workspaces, or commands. Requires HERDR_ENV=1."
 ---
 
 # Herdr
@@ -152,6 +152,25 @@ herdr agent read reviewer --source recent-unwrapped --lines 120
 ```
 
 If a wait fails or returns `blocked`, inspect `agent get` and `agent read` before deciding what input to send. Use the pane surface only when raw terminal control is intentional.
+
+## Delegate to another workspace agent
+
+When the user asks to send work to a named agent, reviewer, or builder, do not return a copy-and-paste prompt before checking the current Herdr workspace.
+
+Prefer the workspace pane over any in-process launcher for the same agent. Some host agents ship plugins or subagents that start another vendor's CLI headless inside the current pane, such as Claude Code's `codex@openai-codex` plugin and its `codex-rescue` subagent. Inside a Herdr workspace those bypass the target's own pane, so nothing appears on that agent's tab and the workspace never observes the handoff. When `HERDR_ENV=1` and `herdr agent list` reports a live agent of the requested kind, route through `herdr agent prompt` instead. Use a headless launcher only when the user names it explicitly or no matching agent exists in this workspace.
+
+1. Verify `HERDR_ENV=1` and read `HERDR_WORKSPACE_ID`.
+2. Run `herdr agent list` and select the requested agent kind from the same workspace. Use its unique `name` or `pane_id`, not the bare kind label.
+3. Send the complete artifact or an exact file path and review criteria with `herdr agent prompt <target> <text> --wait --timeout 120000`.
+4. Read the target with `herdr agent read <target> --source recent-unwrapped --lines 120` and return its actual feedback to the user with clear attribution.
+
+If multiple matching agents exist in the same workspace, use the one configured for the requested workflow role when that is unambiguous; otherwise ask the user which one to use. If no matching agent exists in the current workspace, explain that specific absence instead of claiming agents cannot communicate.
+
+For a Claude target, check whether `claude-model-router-hook@claude-model-router-hook` is enabled in `~/.claude/settings.json`. When it is enabled, start the delegated prompt with `~ `, the router's documented one-prompt bypass. This prevents a non-interactive handoff from being blocked for `/model` and resend while leaving model routing active for prompts the user enters directly. Do not add this prefix for other agents or when the hook is disabled.
+
+For long text, write the artifact to a file inside the shared project and send its exact path instead of embedding escaped newlines in the prompt. Do not overwrite an existing file unless the user requested it; use a temporary project file when appropriate.
+
+For review requests, tell the reviewer not to modify the artifact unless the user requested edits. The originating agent remains responsible for presenting the review and applying any requested changes.
 
 ## Run an ordinary command in another pane
 

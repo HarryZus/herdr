@@ -18,6 +18,7 @@ pub(super) enum SettingsAction {
     SaveSound(bool),
     SaveToastDelivery(ToastDelivery),
     SaveAgentBorderLabels(bool),
+    SaveAgentWorkflow(crate::config::AgentWorkflowConfig),
     InstallRecommendedIntegrations,
 }
 
@@ -33,6 +34,7 @@ impl App {
                 SettingsAction::SaveAgentBorderLabels(enabled) => {
                     self.save_agent_border_labels(enabled)
                 }
+                SettingsAction::SaveAgentWorkflow(workflow) => self.save_agent_workflow(workflow),
                 SettingsAction::InstallRecommendedIntegrations => {
                     self.install_recommended_integrations()
                 }
@@ -91,6 +93,61 @@ fn toast_delivery_for_index(idx: usize) -> ToastDelivery {
     }
 }
 
+const WORKFLOW_FIXED_ROWS: usize = 2;
+
+fn workflow_item_count() -> usize {
+    WORKFLOW_FIXED_ROWS + crate::detect::Agent::ALL.len()
+}
+
+fn workflow_agent_label(idx: usize) -> Option<&'static str> {
+    crate::detect::Agent::ALL
+        .get(idx.checked_sub(WORKFLOW_FIXED_ROWS)?)
+        .map(|agent| crate::detect::agent_label(*agent))
+}
+
+fn cycle_workflow_item(state: &mut AppState, idx: usize) {
+    match idx {
+        0 => state.agent_workflow.enabled = !state.agent_workflow.enabled,
+        1 => state.agent_workflow.auto_start = !state.agent_workflow.auto_start,
+        _ => {
+            let Some(label) = workflow_agent_label(idx) else {
+                return;
+            };
+            if state.agent_workflow.builder == label {
+                state.agent_workflow.builder.clear();
+            } else if let Some(reviewer_idx) = state
+                .agent_workflow
+                .reviewers
+                .iter()
+                .position(|reviewer| reviewer == label)
+            {
+                state.agent_workflow.reviewers.remove(reviewer_idx);
+                let previous_builder =
+                    std::mem::replace(&mut state.agent_workflow.builder, label.to_string());
+                if !previous_builder.is_empty()
+                    && !state.agent_workflow.reviewers.contains(&previous_builder)
+                {
+                    state.agent_workflow.reviewers.push(previous_builder);
+                }
+            } else {
+                state.agent_workflow.reviewers.push(label.to_string());
+            }
+        }
+    }
+}
+
+fn workflow_visible_rows(area: Rect) -> usize {
+    area.height.saturating_sub(3) as usize
+}
+
+fn workflow_scroll(selected: usize, visible_rows: usize) -> usize {
+    if visible_rows == 0 || selected < visible_rows {
+        0
+    } else {
+        selected - visible_rows + 1
+    }
+}
+
 fn preview_selected_theme(state: &mut AppState) {
     use crate::app::state::Palette;
 
@@ -137,6 +194,11 @@ fn apply_settings(state: &mut AppState) -> Option<SettingsAction> {
             Some(SettingsAction::InstallRecommendedIntegrations)
         }
         SettingsSection::Integrations => None,
+        SettingsSection::AgentWorkflow => {
+            let workflow = state.agent_workflow.clone();
+            super::modal::leave_modal(state);
+            Some(SettingsAction::SaveAgentWorkflow(workflow))
+        }
         _ => {
             super::modal::leave_modal(state);
             None
@@ -144,7 +206,11 @@ fn apply_settings(state: &mut AppState) -> Option<SettingsAction> {
     }
 }
 
-pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Option<SettingsAction> {
+pub(super) fn update_settings_state(
+    state: &mut AppState,
+    mut key: KeyEvent,
+) -> Option<SettingsAction> {
+    (key.code, key.modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
     match state.settings.section {
         SettingsSection::Theme => match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -259,6 +325,32 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 state.settings.list.selected = toast_delivery_index(state.toast_delivery());
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                state.settings.section = SettingsSection::AgentWorkflow;
+                state.settings.list.selected = 0;
+            }
+            _ => {
+                if let Some(super::modal::ModalAction::Close) =
+                    super::modal::modal_action_from_key(&key, super::modal::SETTINGS_ACTIONS)
+                {
+                    cancel_settings(state);
+                }
+            }
+        },
+        SettingsSection::AgentWorkflow => match key.code {
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => state.settings.list.move_prev(),
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                state.settings.list.move_next(workflow_item_count())
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                cycle_workflow_item(state, state.settings.list.selected);
+                return Some(SettingsAction::SaveAgentWorkflow(
+                    state.agent_workflow.clone(),
+                ));
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                state.settings.section = SettingsSection::PaneLabels;
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
                 state.settings.section = SettingsSection::Integrations;
                 state.settings.list.selected = 0;
             }
@@ -275,7 +367,7 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 return Some(SettingsAction::InstallRecommendedIntegrations);
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
-                state.settings.section = SettingsSection::PaneLabels;
+                state.settings.section = SettingsSection::AgentWorkflow;
                 state.settings.list.selected = usize::from(!state.agent_border_labels_enabled());
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
@@ -308,6 +400,7 @@ pub(crate) fn open_settings_at(state: &mut AppState, section: SettingsSection) {
         SettingsSection::Sound => usize::from(!state.sound_enabled()),
         SettingsSection::Toast => toast_delivery_index(state.toast_delivery()),
         SettingsSection::PaneLabels => usize::from(!state.agent_border_labels_enabled()),
+        SettingsSection::AgentWorkflow => 0,
         SettingsSection::Integrations => 0,
     };
     state.mode = Mode::Settings;
@@ -402,12 +495,39 @@ impl AppState {
                     None
                 }
             }
+            SettingsSection::AgentWorkflow => {
+                let list_y = area.y + 3;
+                if row < list_y {
+                    return None;
+                }
+                let visible_rows = workflow_visible_rows(area);
+                let scroll = workflow_scroll(self.settings.list.selected, visible_rows);
+                let idx = scroll + (row - list_y) as usize;
+                (idx < workflow_item_count()).then_some(idx)
+            }
             SettingsSection::Integrations => None,
         }
     }
 
     pub(super) fn handle_settings_mouse(&mut self, mouse: MouseEvent) -> Option<SettingsAction> {
         match mouse.kind {
+            MouseEventKind::ScrollUp if self.settings.section == SettingsSection::AgentWorkflow => {
+                let selected = self.settings.list.selected.saturating_sub(1);
+                self.settings.list.select(selected);
+                None
+            }
+            MouseEventKind::ScrollDown
+                if self.settings.section == SettingsSection::AgentWorkflow =>
+            {
+                let selected = self
+                    .settings
+                    .list
+                    .selected
+                    .saturating_add(1)
+                    .min(workflow_item_count().saturating_sub(1));
+                self.settings.list.select(selected);
+                None
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(section) = self.settings_tab_at(mouse.column, mouse.row) {
                     self.settings.section = section;
@@ -421,6 +541,7 @@ impl AppState {
                         SettingsSection::PaneLabels => {
                             usize::from(!self.agent_border_labels_enabled())
                         }
+                        SettingsSection::AgentWorkflow => 0,
                         SettingsSection::Integrations => 0,
                     });
                     return None;
@@ -446,6 +567,12 @@ impl AppState {
                         SettingsSection::PaneLabels => {
                             let enabled = idx == 0;
                             Some(SettingsAction::SaveAgentBorderLabels(enabled))
+                        }
+                        SettingsSection::AgentWorkflow => {
+                            cycle_workflow_item(self, idx);
+                            Some(SettingsAction::SaveAgentWorkflow(
+                                self.agent_workflow.clone(),
+                            ))
                         }
                         SettingsSection::Integrations => None,
                     };
@@ -563,6 +690,12 @@ mod tests {
             &mut state,
             KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
         );
+        assert_eq!(state.settings.section, SettingsSection::AgentWorkflow);
+
+        update_settings_state(
+            &mut state,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::empty()),
+        );
         assert_eq!(state.settings.section, SettingsSection::Integrations);
 
         update_settings_state(
@@ -581,7 +714,132 @@ mod tests {
             &mut state,
             KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty()),
         );
+        assert_eq!(state.settings.section, SettingsSection::AgentWorkflow);
+
+        update_settings_state(
+            &mut state,
+            KeyEvent::new(KeyCode::Left, KeyModifiers::empty()),
+        );
         assert_eq!(state.settings.section, SettingsSection::PaneLabels);
+    }
+
+    #[test]
+    fn settings_shift_tab_event_moves_to_previous_section() {
+        let mut state = state_with_workspaces(&["test"]);
+        open_settings_at(&mut state, SettingsSection::Integrations);
+
+        update_settings_state(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
+
+        assert_eq!(state.settings.section, SettingsSection::AgentWorkflow);
+    }
+
+    #[test]
+    fn workflow_tab_and_shift_tab_move_between_ui_rows() {
+        let mut state = state_with_workspaces(&["test"]);
+        open_settings_at(&mut state, SettingsSection::AgentWorkflow);
+
+        update_settings_state(
+            &mut state,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
+        );
+        assert_eq!(state.settings.list.selected, 1);
+
+        update_settings_state(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
+        assert_eq!(state.settings.section, SettingsSection::AgentWorkflow);
+        assert_eq!(state.settings.list.selected, 0);
+    }
+
+    #[test]
+    fn workflow_agent_row_cycles_reviewer_builder_and_off() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.agent_workflow.builder = "claude".into();
+        state.agent_workflow.reviewers.clear();
+        open_settings_at(&mut state, SettingsSection::AgentWorkflow);
+        let codex_idx = WORKFLOW_FIXED_ROWS
+            + crate::detect::Agent::ALL
+                .iter()
+                .position(|agent| crate::detect::agent_label(*agent) == "codex")
+                .unwrap();
+        state.settings.list.selected = codex_idx;
+
+        let reviewer = update_settings_state(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        );
+        assert!(matches!(
+            reviewer,
+            Some(SettingsAction::SaveAgentWorkflow(_))
+        ));
+        assert_eq!(state.agent_workflow.reviewers, ["codex"]);
+
+        update_settings_state(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        );
+        assert_eq!(state.agent_workflow.builder, "codex");
+        assert_eq!(state.agent_workflow.reviewers, ["claude"]);
+
+        update_settings_state(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        );
+        assert!(state.agent_workflow.builder.is_empty());
+        assert_eq!(state.agent_workflow.reviewers, ["claude"]);
+    }
+
+    #[test]
+    fn workflow_mouse_rows_toggle_auto_start_and_agent_roles() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.view.sidebar_rect = Rect::new(0, 0, 26, 30);
+        state.view.terminal_area = Rect::new(26, 0, 94, 30);
+        open_settings_at(&mut state, SettingsSection::AgentWorkflow);
+        let area = state.settings_content_rect();
+
+        let auto_start = state.handle_settings_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 2,
+            area.y + 4,
+        ));
+        assert!(matches!(
+            auto_start,
+            Some(SettingsAction::SaveAgentWorkflow(_))
+        ));
+        assert!(!state.agent_workflow.auto_start);
+
+        let pi = state.handle_settings_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 2,
+            area.y + 5,
+        ));
+        assert!(matches!(pi, Some(SettingsAction::SaveAgentWorkflow(_))));
+        assert!(state
+            .agent_workflow
+            .reviewers
+            .iter()
+            .any(|reviewer| reviewer == "pi"));
+    }
+
+    #[test]
+    fn workflow_mouse_wheel_reaches_agents_below_visible_rows() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.view.sidebar_rect = Rect::new(0, 0, 26, 30);
+        state.view.terminal_area = Rect::new(26, 0, 94, 30);
+        open_settings_at(&mut state, SettingsSection::AgentWorkflow);
+        let area = state.settings_content_rect();
+
+        for _ in 0..workflow_item_count() {
+            state.handle_settings_mouse(mouse(MouseEventKind::ScrollDown, area.x + 2, area.y + 4));
+        }
+        assert_eq!(
+            state.settings.list.selected,
+            workflow_item_count().saturating_sub(1)
+        );
+
+        state.handle_settings_mouse(mouse(MouseEventKind::ScrollUp, area.x + 2, area.y + 4));
+        assert_eq!(
+            state.settings.list.selected,
+            workflow_item_count().saturating_sub(2)
+        );
     }
 
     #[test]
