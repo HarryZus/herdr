@@ -1088,6 +1088,7 @@ pub enum SettingsSection {
     Sound,
     Toast,
     PaneLabels,
+    AgentWorkflow,
     Integrations,
 }
 
@@ -1098,6 +1099,7 @@ impl SettingsSection {
         Self::Sound,
         Self::Toast,
         Self::PaneLabels,
+        Self::AgentWorkflow,
         Self::Integrations,
     ];
 
@@ -1108,6 +1110,7 @@ impl SettingsSection {
             Self::Sound => "sound",
             Self::Toast => "toasts",
             Self::PaneLabels => "pane labels",
+            Self::AgentWorkflow => "agents",
             Self::Integrations => "integrations",
         }
     }
@@ -1530,6 +1533,7 @@ pub struct AppState {
     pub sidebar_section_split: f32,
     pub agent_panel_sort: AgentPanelSort,
     pub status_indicators: crate::config::StatusIndicatorStyle,
+    pub agent_workflow: crate::config::AgentWorkflowConfig,
     /// Transient session-wide projection override for the built-in Agents view.
     pub agent_view_override: Option<crate::api::schema::AgentViewSetParams>,
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
@@ -1925,6 +1929,7 @@ impl AppState {
             sidebar_section_split: 0.5,
             agent_panel_sort: AgentPanelSort::Spaces,
             status_indicators: crate::config::StatusIndicatorStyle::Dots,
+            agent_workflow: crate::config::AgentWorkflowConfig::default(),
             agent_view_override: None,
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),

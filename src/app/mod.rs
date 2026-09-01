@@ -651,6 +651,7 @@ impl App {
             sidebar_section_split,
             agent_panel_sort,
             status_indicators: config.ui.status_indicators,
+            agent_workflow: config.agent_workflow.clone(),
             agent_view_override: None,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
@@ -1536,6 +1537,10 @@ impl App {
                 self.state.sound = config.ui.sound.clone();
                 self.state.toast_config = config.ui.toast.clone();
             }
+        }
+
+        if !invalid_section("agent_workflow") {
+            self.state.agent_workflow = config.agent_workflow.clone();
         }
 
         if !invalid_section("experimental") {
@@ -3646,6 +3651,91 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("delivery = \"terminal\""));
         assert!(app.state.config_diagnostic.is_none());
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn settings_save_agent_workflow_persists_then_applies_live_config() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("settings-save-agent-workflow");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "onboarding = false\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        let workflow = crate::config::AgentWorkflowConfig {
+            enabled: true,
+            builder: "pi".into(),
+            reviewers: vec!["claude".into(), "codex".into()],
+            auto_start: false,
+        };
+
+        app.save_agent_workflow(workflow.clone());
+
+        assert_eq!(app.state.agent_workflow, workflow);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[agent_workflow]"));
+        assert!(content.contains("builder = \"pi\""));
+        assert!(content.contains("reviewers = [\"claude\", \"codex\"]"));
+        assert!(content.contains("auto_start = false"));
+        assert!(app.state.config_diagnostic.is_none());
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn reload_config_applies_workflow_when_ui_section_is_invalid() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-workflow-with-invalid-ui");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "[agent_workflow]\nenabled = true\nbuilder = \"pi\"\nreviewers = [\"claude\"]\nauto_start = false\n[ui]\nmouse_capture = \"yes\"\n",
+        )
+        .unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert!(app.state.agent_workflow.enabled);
+        assert_eq!(app.state.agent_workflow.builder, "pi");
+        assert_eq!(app.state.agent_workflow.reviewers, ["claude"]);
+        assert!(!app.state.agent_workflow.auto_start);
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn reload_config_preserves_workflow_when_its_section_is_invalid() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-invalid-workflow");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "[agent_workflow]\nenabled = \"yes\"\nbuilder = \"pi\"\nreviewers = [\"claude\"]\nauto_start = false\n[ui]\ncopy_on_select = false\n",
+        )
+        .unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        let original_workflow = crate::config::AgentWorkflowConfig {
+            enabled: true,
+            builder: "codex".into(),
+            reviewers: vec!["claude".into()],
+            auto_start: true,
+        };
+        app.state.agent_workflow = original_workflow.clone();
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert_eq!(app.state.agent_workflow, original_workflow);
+        assert!(!app.state.copy_on_select);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());

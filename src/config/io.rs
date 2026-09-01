@@ -6,6 +6,7 @@ use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
+    "agent_workflow",
     "experimental",
     "keys",
     "onboarding",
@@ -316,6 +317,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.ui = section,
+    );
+    load_live_section(
+        table,
+        "agent_workflow",
+        "agent workflow config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.agent_workflow = section,
     );
     load_live_section(
         table,
@@ -870,6 +879,27 @@ resume_agents_on_restore = true
         .unwrap();
 
         assert!(loaded.config.session.resume_agents_on_restore);
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_parses_agent_workflow_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[agent_workflow]
+enabled = true
+builder = "pi"
+reviewers = ["claude", "codex"]
+auto_start = false
+"#,
+        )
+        .unwrap();
+
+        assert!(loaded.config.agent_workflow.enabled);
+        assert_eq!(loaded.config.agent_workflow.builder, "pi");
+        assert_eq!(loaded.config.agent_workflow.reviewers, ["claude", "codex"]);
+        assert!(!loaded.config.agent_workflow.auto_start);
         assert!(loaded.diagnostics.is_empty());
         assert!(loaded.invalid_sections.is_empty());
     }

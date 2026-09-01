@@ -105,6 +105,43 @@ impl App {
         }
     }
 
+    pub(super) fn save_agent_workflow(&mut self, workflow: crate::config::AgentWorkflowConfig) {
+        if self.update_config_file("agent workflow", |content| {
+            let content = crate::config::upsert_section_bool(
+                content,
+                "agent_workflow",
+                "enabled",
+                workflow.enabled,
+            );
+            let content = crate::config::upsert_section_value(
+                &content,
+                "agent_workflow",
+                "builder",
+                &format!("\"{}\"", workflow.builder),
+            );
+            let reviewers = workflow
+                .reviewers
+                .iter()
+                .map(|item| format!("\"{item}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let content = crate::config::upsert_section_value(
+                &content,
+                "agent_workflow",
+                "reviewers",
+                &format!("[{reviewers}]"),
+            );
+            crate::config::upsert_section_bool(
+                &content,
+                "agent_workflow",
+                "auto_start",
+                workflow.auto_start,
+            )
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
     pub(super) fn save_agent_panel_sort(&mut self, sort: crate::app::state::AgentPanelSort) {
         let value = match sort {
             crate::app::state::AgentPanelSort::Spaces => {

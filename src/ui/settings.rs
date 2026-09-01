@@ -162,6 +162,9 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
                 app.settings.list.selected,
             );
         }
+        SettingsSection::AgentWorkflow => {
+            render_agent_workflow(app, frame, content_area);
+        }
         SettingsSection::Integrations => {
             render_settings_integrations(app, frame, content_area);
         }
@@ -197,14 +200,97 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
                 .add_modifier(Modifier::BOLD),
         );
 
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
+        let navigation_hint = if app.settings.section == SettingsSection::AgentWorkflow {
+            vec![
+                Span::styled(" wheel or tab", Style::default().fg(p.overlay0)),
+                Span::styled(" option  ", Style::default().fg(p.overlay1)),
+                Span::styled("←/→", Style::default().fg(p.overlay0)),
+                Span::styled(" section", Style::default().fg(p.overlay1)),
+            ]
+        } else {
+            vec![
                 Span::styled(" ↑↓", Style::default().fg(p.overlay0)),
                 Span::styled(" select  ", Style::default().fg(p.overlay1)),
                 Span::styled("tab", Style::default().fg(p.overlay0)),
                 Span::styled(" section", Style::default().fg(p.overlay1)),
-            ])),
-            footer_rows[0],
+            ]
+        };
+        frame.render_widget(Paragraph::new(Line::from(navigation_hint)), footer_rows[0]);
+    }
+}
+
+fn render_agent_workflow(app: &AppState, frame: &mut Frame, area: Rect) {
+    let workflow = &app.agent_workflow;
+    if area.height < 4 {
+        return;
+    }
+
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                " automatic agent workspace",
+                Style::default()
+                    .fg(app.palette.text)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                " click a row to cycle off, reviewer, and builder roles",
+                Style::default().fg(app.palette.overlay1),
+            )),
+        ]),
+        Rect::new(area.x, area.y, area.width, 2),
+    );
+
+    let list_area = Rect::new(
+        area.x,
+        area.y + 3,
+        area.width,
+        area.height.saturating_sub(3),
+    );
+    let item_count = 2 + crate::detect::Agent::ALL.len();
+    let visible_rows = list_area.height as usize;
+    let selected = app.settings.list.selected.min(item_count.saturating_sub(1));
+    let scroll = if visible_rows == 0 || selected < visible_rows {
+        0
+    } else {
+        selected - visible_rows + 1
+    };
+
+    for (row, idx) in (scroll..item_count).take(visible_rows).enumerate() {
+        let (label, value) = match idx {
+            0 => (
+                "workflow".to_string(),
+                if workflow.enabled { "on" } else { "off" },
+            ),
+            1 => (
+                "start agents when a workspace is created".to_string(),
+                if workflow.auto_start { "on" } else { "off" },
+            ),
+            _ => {
+                let agent = crate::detect::Agent::ALL[idx - 2];
+                let label = crate::detect::agent_label(agent);
+                let role = if workflow.builder == label {
+                    "builder"
+                } else if workflow.reviewers.iter().any(|reviewer| reviewer == label) {
+                    "reviewer"
+                } else {
+                    "off"
+                };
+                (label.to_string(), role)
+            }
+        };
+        let style = if idx == selected {
+            Style::default()
+                .fg(app.palette.text)
+                .bg(app.palette.surface0)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.palette.subtext0)
+        };
+        let line = format!(" {label:<45} {value:>10}");
+        frame.render_widget(
+            Paragraph::new(line).style(style),
+            Rect::new(list_area.x, list_area.y + row as u16, list_area.width, 1),
         );
     }
 }
